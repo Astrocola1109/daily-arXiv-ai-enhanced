@@ -22,6 +22,7 @@ GitHub Actions builds and publishes only `personal/site/`.
 6. Run `.venv/bin/python -m digest setup` in a local terminal. Supply the project URL, anon/publishable key,
    service-role key, owner UUID and SMTP settings. Secrets are saved to `.env` with mode 0600 and ignored by Git.
    For a 163 sender, verify SMTP is enabled and use the mailbox's SMTP authorization code, not its normal login password.
+   To add or replace only the mail authorization code later, run `.venv/bin/python -m digest setup-mail` in your own interactive terminal. Input is hidden and no email is sent by this setup command.
 7. Run `.venv/bin/python -m digest doctor`, then `.venv/bin/python -m digest sync-profile`.
 8. Set repository **Variables**, `SUPABASE_URL` and `SUPABASE_ANON_KEY` (public values only).
    Set Pages source to GitHub Actions, then run “Private digest website”.

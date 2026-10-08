@@ -53,3 +53,22 @@ class NotificationTests(unittest.TestCase):
         self.assertNotIn('<script>',result[2]);self.assertIn('&lt;script&gt;',result[2])
 
 if __name__=='__main__':unittest.main()
+
+class RevisionDiscoveryTests(unittest.TestCase):
+    def test_unseen_high_relevance_revision_is_read_and_low_relevance_is_excluded(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import date
+        from unittest.mock import Mock
+        from digest.pipeline import prepare
+        store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
+        events=[{'id':aid,'version_id':aid+'v2','day':'2026-10-07'} for aid in ['2609.00001','2609.00002']]
+        model=Mock();model.calls=[]
+        model.screen.return_value={e['id']:{'id':e['id'],'relevance':'extension','high_related':i==0,'reason':'test','research_lines':[]} for i,e in enumerate(events)}
+        model.card.return_value={'main_results':['source-grounded fixture']}
+        source={'text':'fixture','references_text':'[1] fixture','pages_total':1,'pages_read':[1],'full_text':True}
+        with tempfile.TemporaryDirectory() as directory, patch('digest.pipeline.ROOT',Path(directory)), patch('digest.pipeline.Store',return_value=store), patch('digest.pipeline.Client'), patch('digest.pipeline.collect',return_value=([],events,[])), patch('digest.pipeline.metadata',return_value=[dict(e) for e in events]), patch('digest.pipeline.Codex',return_value=model), patch('digest.pipeline.extract_fulltext',return_value=source) as extract:
+            digests,_=prepare({'research_lines':['test'],'categories':['math.QA'],'batch_size':12},[date(2026,10,7)])
+            self.assertEqual([p['id'] for p in digests[0]['papers']],['2609.00001'])
+            self.assertEqual(extract.call_count,1)
+            self.assertEqual(len(model.screen.call_args.args[0]),2)

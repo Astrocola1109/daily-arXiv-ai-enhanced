@@ -3,6 +3,23 @@ from datetime import date
 from .common import ROOT, load_config, load_env, write_json, read_json, yesterday
 from .store import Store
 
+def setup_mail():
+    path=ROOT/'.env'
+    if not path.exists():raise RuntimeError('Configure the database first with setup')
+    if not sys.stdin.isatty():raise RuntimeError('Run setup-mail in your own interactive terminal')
+    print('仅在本机保存 163 SMTP 授权码；输入不回显，不是邮箱登录密码。')
+    secret=getpass.getpass('163 SMTP authorization code: ').strip()
+    if not secret or '\n' in secret or '\r' in secret:raise RuntimeError('Invalid empty or multiline authorization code')
+    lines=[line for line in path.read_text().splitlines() if not line.startswith('SMTP_PASSWORD=')]
+    import tempfile
+    fd,tmp=tempfile.mkstemp(dir=ROOT,prefix='.mail-')
+    try:
+        with os.fdopen(fd,'w') as f:f.write('\n'.join(lines+['SMTP_PASSWORD='+secret])+'\n')
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+    print('授权码已保存。本命令没有发送邮件。')
+
 def setup():
     path=ROOT/'.env'
     if path.exists():raise RuntimeError('.env already exists; edit it locally instead of overwriting credentials')
@@ -19,11 +36,12 @@ def setup():
 
 def main():
     parser=argparse.ArgumentParser(description='Private arXiv digest: local GPT-5.6 Sol / High runner')
-    parser.add_argument('command',choices=['setup','doctor','collect','prepare','publish','send','run','propose-interests','accept-interests','sync-profile'])
+    parser.add_argument('command',choices=['setup','setup-mail','doctor','collect','prepare','publish','send','run','propose-interests','accept-interests','sync-profile'])
     parser.add_argument('--date',type=date.fromisoformat)
     parser.add_argument('--allow-early',action='store_true',help='Explicit manual email test before 09:00')
     args=parser.parse_args()
     if args.command=='setup':setup();return
+    if args.command=='setup-mail':setup_mail();return
     config=load_config();store=Store()
     if args.command=='doctor':
         import shutil,subprocess

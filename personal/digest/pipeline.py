@@ -10,14 +10,13 @@ def prepare(config, days=None):
     if days is None:
         days=[yesterday()-timedelta(days=i) for i in reversed(range(7))] if not store.data['digests'] else [yesterday()]
     client=Client();papers,revisions,warnings=collect(client,config['categories'],days)
-    by_id={p['id']:p for p in papers}
     revision_events={}
     for event in revisions:
         prior=store.data['papers'].get(event['id'],{})
-        state=store.data['states'].get(event['id'],{})
-        if prior.get('high_related') or state.get('favorite'):
-            if prior.get('version_id')!=event['version_id']:
-                revision_events[event['version_id']]=event
+        # Unknown older papers may be highly relevant: screen their revision
+        # abstracts before deciding whether they qualify for a reminder.
+        if prior.get('version_id')!=event['version_id']:
+            revision_events[event['version_id']]=event
     if revision_events:
         for p in metadata(client,list(revision_events)):
             e=revision_events[p['version_id']]
@@ -39,6 +38,9 @@ def prepare(config, days=None):
             if p['event']=='revision':
                 prior=store.data['papers'].get(p['id'],{})
                 p['high_related']=bool(prior.get('high_related') or p['high_related'])
+                if not (p['high_related'] or store.data['states'].get(p['id'],{}).get('favorite')):
+                    p['exclude_from_digest']=True
+                    continue
                 if p['relevance']=='unrelated':p['relevance']='extension'
             if p['relevance']!='unrelated' and not store.data['states'].get(p['id'],{}).get('disliked'):
                 try:
@@ -59,7 +61,7 @@ def prepare(config, days=None):
     digests=[]
     for day in days:
         ds=str(day)
-        digest={'day':ds,'papers':[p for p in papers if p['announcement_date']==ds],
+        digest={'day':ds,'papers':[p for p in papers if p['announcement_date']==ds and not p.get('exclude_from_digest')],
                 'warnings':[w for w in warnings if ds in w],
                 'model':config.get('model'),'reasoning_effort':config.get('reasoning_effort'),
                 'research_profile_hash':fingerprint(config['research_lines'])}
