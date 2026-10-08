@@ -7,9 +7,14 @@ def setup_mail():
     path=ROOT/'.env'
     if not path.exists():raise RuntimeError('Configure the database first with setup')
     if not sys.stdin.isatty():raise RuntimeError('Run setup-mail in your own interactive terminal')
-    print('仅在本机保存 163 SMTP 授权码；输入不回显，不是邮箱登录密码。')
+    print('请完整复制 163 客户端授权码，在下方粘贴后按回车。输入不会显示字符或星号，这是正常现象。')
+    print('不是邮箱登录密码；请勿在聊天中发送授权码。')
     secret=getpass.getpass('163 SMTP authorization code: ').strip()
-    if not secret or '\n' in secret or '\r' in secret:raise RuntimeError('Invalid empty or multiline authorization code')
+    if len(secret)<8 or any(c.isspace() for c in secret):
+        raise RuntimeError('输入看起来不完整或含空白，未覆盖现有配置。请重新运行并粘贴完整授权码。')
+    print(f'已接收 {len(secret)} 个字符（不显示内容）。')
+    if input('确认已粘贴完整授权码？输入 yes 保存：').strip().lower()!='yes':
+        raise RuntimeError('未确认，现有配置未变更。')
     lines=[line for line in path.read_text().splitlines() if not line.startswith('SMTP_PASSWORD=')]
     import tempfile
     fd,tmp=tempfile.mkstemp(dir=ROOT,prefix='.mail-')
