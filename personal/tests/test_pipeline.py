@@ -47,6 +47,25 @@ class AnnouncementTests(unittest.TestCase):
             self.assertEqual(str(yesterday()),'2026-10-07')
 
 class NotificationTests(unittest.TestCase):
+    def test_authentication_failure_does_not_block_a_later_delivery(self):
+        import tempfile, smtplib
+        from pathlib import Path
+        from digest.emailing import deliver
+        from digest.common import read_json
+        config={'site_url':'https://example.com/','email_to':'recipient@example.com'}
+        digest={'day':'2026-10-07','papers':[self.paper()]}
+        env={'SMTP_HOST':'smtp.example.com','SMTP_USER':'sender@example.com','SMTP_PASSWORD':'test-fixture','SMTP_FROM':'sender@example.com'}
+        with tempfile.TemporaryDirectory() as directory, patch('digest.emailing.ROOT',Path(directory)), patch.dict('os.environ',env), patch('digest.emailing.smtplib.SMTP_SSL') as factory:
+            server=factory.return_value.__enter__.return_value
+            server.login.side_effect=smtplib.SMTPAuthenticationError(535,b'authentication failed')
+            with self.assertRaises(smtplib.SMTPAuthenticationError):deliver(digest,config,{},allow_early=True)
+            self.assertFalse((Path(directory)/'runtime'/'mail-ledger.json').exists())
+            server.send_message.assert_not_called()
+            server.login.side_effect=None;server.send_message.return_value={}
+            self.assertEqual(deliver(digest,config,{},allow_early=True),'sent')
+            self.assertEqual(read_json(Path(directory)/'runtime'/'mail-ledger.json')[digest['day']]['state'],'sent')
+            self.assertEqual(deliver(digest,config,{},allow_early=True),'already_sent')
+            server.send_message.assert_called_once()
     def paper(self,kind='extension',event='new',high=False):
         return {'id':'2610.00001','version_id':'2610.00001v1','title':'A <script>','authors':['Author'],
                 'reason':'方法相关','relevance':kind,'event':event,'high_related':high}

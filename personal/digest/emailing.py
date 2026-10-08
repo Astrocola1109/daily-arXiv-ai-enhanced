@@ -42,10 +42,12 @@ def deliver(digest, config, states, allow_early=False):
     msg=EmailMessage();msg['Subject']=rendered[0];msg['From']=os.environ['SMTP_FROM'];msg['To']=config['email_to']
     msg['Message-ID']='<'+str(uuid.uuid4())+'@personal-arxiv-digest>'
     msg.set_content(rendered[1]);msg.add_alternative(rendered[2],subtype='html')
-    ledger[day]={'state':'sending','message_id':msg['Message-ID']};write_json(ledger_path,ledger)
     with smtplib.SMTP_SSL(os.environ['SMTP_HOST'],int(os.environ.get('SMTP_PORT','465')),
                           context=ssl.create_default_context(),timeout=45) as server:
         server.login(os.environ['SMTP_USER'],os.environ['SMTP_PASSWORD'])
+        # Authentication cannot deliver a message. Only record an uncertain
+        # delivery attempt once authentication has succeeded.
+        ledger[day]={'state':'sending','message_id':msg['Message-ID']};write_json(ledger_path,ledger)
         refused=server.send_message(msg)
         if refused:raise RuntimeError('SMTP recipient rejected; inspect local mail ledger')
     ledger[day]['state']='sent';write_json(ledger_path,ledger)
