@@ -6,17 +6,17 @@ from .store import Store
 
 def prepare(config, days=None):
     store=Store();store.pull()
+    bootstrap=days is None and not store.data.get('bootstrap_complete',False)
     if store.data.get('profile'):config={**config,'research_lines':store.data['profile']['research_lines']}
     if days is None:
-        days=[yesterday()-timedelta(days=i) for i in reversed(range(7))] if not store.data['digests'] else [yesterday()]
+        days=[yesterday()-timedelta(days=i) for i in reversed(range(7))] if bootstrap else [yesterday()]
     client=Client();papers,revisions,warnings=collect(client,config['categories'],days)
     revision_events={}
     for event in revisions:
-        prior=store.data['papers'].get(event['id'],{})
         # Unknown older papers may be highly relevant: screen their revision
         # abstracts before deciding whether they qualify for a reminder.
-        if prior.get('version_id')!=event['version_id']:
-            revision_events[event['version_id']]=event
+        # Retain events on retries too; model caching handles duplicate work.
+        revision_events[event['version_id']]=event
     if revision_events:
         for p in metadata(client,list(revision_events)):
             e=revision_events[p['version_id']]
@@ -68,4 +68,7 @@ def prepare(config, days=None):
         write_json(ROOT/'runtime'/'digests'/(ds+'.json'),digest)
         store.data['digests'][ds]={'prepared':True,'published':False}
         store.save();digests.append(digest)
+    if bootstrap:
+        store.data['bootstrap_complete']=True
+        store.save()
     return digests,model.calls

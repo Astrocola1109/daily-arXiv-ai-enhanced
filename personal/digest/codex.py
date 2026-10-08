@@ -69,7 +69,7 @@ class Codex:
         return result
 
     def screen(self, papers):
-        result=self.run('四条主线同等重要。优先召回，边界不确定时归入extension，并说明不确定。'
+        result=self.run('所有当前研究主线同等重要。优先召回，边界不确定时归入extension，并说明不确定。'
                         'direct表示直接研究对象相关；extension表示方法或邻近工具相关；unrelated表示目前无明确联系。'
                         '每个输入id必须恰好返回一次；不要固定推荐篇数。high_related仅表示与现有课题有很强联系。',
                         {'research_lines':self.config['research_lines'],'papers':papers},SCREEN_SCHEMA)['papers']
