@@ -47,10 +47,15 @@ class Client:
 def parse_recent(raw, category):
     soup = BeautifulSoup(raw, 'html.parser')
     result = []
+    dated_headings = 0
     for heading in soup.find_all('h3'):
         text = heading.get_text(' ', strip=True)
         match = re.search(r'([A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2} \d{4})', text)
         if not match: continue
+        dated_headings += 1
+        counts = re.search(r'showing\s+(\d+)\s+of\s+(\d+)\s+entries', text)
+        if counts and int(counts[1]) < int(counts[2]):
+            raise RuntimeError(f'{category}: announcement listing is truncated; pagination required')
         day = datetime.strptime(match[1], '%a, %d %b %Y').date().isoformat()
         listing = heading.find_next('dl')
         if listing is None: continue
@@ -59,6 +64,8 @@ def parse_recent(raw, category):
             if not link: continue
             aid = base_id(link['href'].removeprefix('/abs/'))
             result.append({'id': aid, 'day': day, 'category': category, 'cross': 'cross-list' in dt.get_text()})
+    if not dated_headings and not re.search(r'no (?:new )?(?:articles|entries|updates|submissions)', soup.get_text(), re.I):
+        raise RuntimeError(f'{category}: announcement page was not recognized; refusing to treat it as an empty day')
     return result
 
 def parse_feed(raw):

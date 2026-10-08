@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from digest.arxiv import parse_recent,parse_feed,parse_metadata,valid_id
+from digest.arxiv import parse_recent,parse_feed,parse_metadata,valid_id,metadata
 from digest.emailing import notifications,render
 from digest.common import yesterday
 
@@ -19,6 +19,16 @@ class AnnouncementTests(unittest.TestCase):
     def test_bad_id_is_rejected(self):
         for aid in ['../secret','2610.12345;curl x','https://evil.test']:
             with self.assertRaises(ValueError):valid_id(aid)
+    def test_unrecognized_or_truncated_list_is_not_an_empty_day(self):
+        for raw in ['<html>Temporarily unavailable</html>', '<h3>Wed, 7 Oct 2026 (showing 2000 of 2001 entries)</h3><dl></dl>']:
+            with self.assertRaises(RuntimeError):parse_recent(raw,'math.QA')
+    def test_metadata_keeps_two_announced_versions_of_same_paper(self):
+        from unittest.mock import Mock
+        rows=[{'id':'2610.00001','version_id':'2610.00001v2'}, {'id':'2610.00001','version_id':'2610.00001v3'}]
+        with patch('digest.arxiv.parse_metadata',return_value=rows):
+            self.assertEqual(metadata(Mock(),['2610.00001v2','2610.00001v3']),rows)
+        with patch('digest.arxiv.parse_metadata',return_value=rows[:1]):
+            with self.assertRaises(RuntimeError):metadata(Mock(),['2610.00001v2','2610.00001v3'])
     def test_beijing_day_at_utc_boundary(self):
         with patch('digest.common.datetime') as clock:
             clock.now.return_value=datetime(2026,10,8,0,5,tzinfo=ZoneInfo('Asia/Shanghai'))
