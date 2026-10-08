@@ -17,3 +17,12 @@ package-lock.json
 yarn.lock
 .DS_Store
 package.json
+# Modified for the personal digest: local data and credentials never enter Git.
+!personal/package.json
+!personal/package-lock.json
+personal/.env
+personal/config.local.json
+personal/runtime/
+personal/.venv/
+personal/web/config.json
+personal/site/

@@ -1,0 +1,13 @@
+{
+  "categories": ["math.QA", "math.RA", "math.RT", "math.SG", "math.AG", "math.DG", "math-ph", "hep-th", "nlin.SI"],
+  "research_lines": [],
+  "context_directories": [],
+  "chat_exports": [],
+  "email_to": "your-address@example.com",
+  "site_url": "https://YOUR-ACCOUNT.github.io/daily-arXiv-ai-enhanced/",
+  "model": "gpt-5.6-sol",
+  "reasoning_effort": "high",
+  "batch_size": 12,
+  "max_source_chars": 480000,
+  "codex_timeout_seconds": 1800
+}

@@ -1,0 +1,5 @@
+Personal digest additions: 2026.
+Based on dw-dengwei/daily-arXiv-ai-enhanced and its contributors.
+The original LICENSE applies as distributed. The personal workflow replaces public data publication
+with an authenticated backend; new source files are under personal/.
+Supabase JS, KaTeX, esbuild and PGlite retain their respective package license notices.
