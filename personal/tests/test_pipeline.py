@@ -2,11 +2,23 @@ import unittest
 from unittest.mock import patch
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from digest.arxiv import parse_recent,parse_feed,parse_metadata,valid_id,metadata
+from digest.arxiv import parse_recent,parse_feed,parse_metadata,valid_id,metadata,collect
 from digest.emailing import notifications,render
 from digest.common import yesterday
 
 class AnnouncementTests(unittest.TestCase):
+    def test_crosslist_resolves_lowercase_hyphenated_primary_category(self):
+        from unittest.mock import Mock
+        client=Mock()
+        listing=b'<h3>Wed, 7 Oct 2026 (showing 1 of 1 entries)</h3><dl><dt><a href="/abs/2610.00001">x</a></dt></dl>'
+        client.get.side_effect=[listing,b'<feed xmlns="http://www.w3.org/2005/Atom"/>',listing]
+        paper={'id':'2610.00001','version_id':'2610.00001v1','primary_category':'cond-mat.mes-hall'}
+        with patch('digest.arxiv.metadata',return_value=[paper]), patch('digest.arxiv.read_json',return_value=[]):
+            rows,_,_=collect(client,['math.QA'],['2026-10-07'])
+        self.assertEqual(rows[0]['announcement_date'],'2026-10-07')
+        self.assertIn('cond-mat.mes-hall/recent',client.get.call_args.args[0])
+        for invalid in ['../secret','math.QA?redirect=x','math.QA/other']:
+            with self.assertRaises(ValueError):collect(client,[invalid],[])
     def test_listing_uses_heading_and_distinguishes_crosslist(self):
         raw='<h3>Wed, 7 Oct 2026 (showing 2 of 2 entries)</h3><dl><dt><a href="/abs/2610.00001">x</a></dt><dd>one</dd><dt><a href="/abs/2609.00002">x</a> (cross-list from math.CO)</dt><dd>old</dd></dl>'
         rows=parse_recent(raw,'math.QA')
@@ -52,8 +64,6 @@ class NotificationTests(unittest.TestCase):
         result=render({'day':'x','papers':[self.paper()]},'https://example.com/',{})
         self.assertNotIn('<script>',result[2]);self.assertIn('&lt;script&gt;',result[2])
 
-if __name__=='__main__':unittest.main()
-
 class RevisionDiscoveryTests(unittest.TestCase):
     def test_unseen_high_relevance_revision_is_read_and_low_relevance_is_excluded(self):
         import tempfile
@@ -72,3 +82,5 @@ class RevisionDiscoveryTests(unittest.TestCase):
             self.assertEqual([p['id'] for p in digests[0]['papers']],['2609.00001'])
             self.assertEqual(extract.call_count,1)
             self.assertEqual(len(model.screen.call_args.args[0]),2)
+
+if __name__=='__main__':unittest.main()

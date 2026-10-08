@@ -8,6 +8,7 @@ from .common import ROOT, BJ, today, read_json, write_json, fingerprint
 
 ATOM = {'a': 'http://www.w3.org/2005/Atom', 'x': 'http://arxiv.org/schemas/atom', 'dc': 'http://purl.org/dc/elements/1.1/'}
 ID = re.compile(r'(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?$')
+CATEGORY = re.compile(r'[a-z]+(?:-[a-z]+)*(?:\.[A-Za-z]+(?:-[A-Za-z]+)*)?')
 
 def valid_id(aid):
     if not ID.fullmatch(aid): raise ValueError('Invalid arXiv identifier')
@@ -118,7 +119,7 @@ def collect(client, categories, days):
     wanted = {str(d) for d in days}
     listings = {}; candidates = {}; feed_events = {}; warnings = []
     for cat in categories:
-        if not re.fullmatch(r'[a-z-]+(?:\.[A-Z]{2})?', cat): raise ValueError('Invalid category')
+        if not CATEGORY.fullmatch(cat): raise ValueError('Invalid category')
         listing = parse_recent(client.get('https://arxiv.org/list/' + cat + '/recent?show=2000'), cat)
         listings[cat] = listing
         for p in listing:
@@ -138,7 +139,7 @@ def collect(client, categories, days):
     # Explicit v1 keeps a later revision from contaminating a historical new-paper card.
     papers = metadata(client, [aid + 'v1' for aid in sorted(candidates)]) if candidates else []
     for cat in sorted({p['primary_category'] for p in papers} - set(listings)):
-        if not re.fullmatch(r'[a-z-]+(?:\.[A-Z]{2})?', cat): raise RuntimeError('Unknown primary category')
+        if not CATEGORY.fullmatch(cat): raise RuntimeError('Unknown primary category: ' + repr(cat))
         listings[cat] = parse_recent(client.get('https://arxiv.org/list/' + cat + '/recent?show=2000'), cat)
     first_dates = {p['id']: p['day'] for entries in listings.values() for p in entries if not p['cross']}
     output = []
