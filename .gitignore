@@ -16,6 +16,8 @@ node_modules/
 package-lock.json
 yarn.lock
 .DS_Store
+*.swp
+*.swo
 package.json
 # Modified for the personal digest: local data and credentials never enter Git.
 !personal/package.json

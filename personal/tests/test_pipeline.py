@@ -102,4 +102,47 @@ class RevisionDiscoveryTests(unittest.TestCase):
             self.assertEqual(extract.call_count,1)
             self.assertEqual(len(model.screen.call_args.args[0]),2)
 
+class DigestReuseTests(unittest.TestCase):
+    def test_backfill_reuses_completed_version_but_profile_change_invalidates(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import date
+        from unittest.mock import Mock
+        from digest.pipeline import prepare
+        store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
+        paper={'id':'2610.00001','version_id':'2610.00001v1','announcement_date':'2026-10-07','event':'new','title':'Fixture','abstract':'Fixture abstract','authors':['Author'],'categories':['math.QA'],'primary_category':'math.QA'}
+        model=Mock();model.calls=[]
+        model.screen.side_effect=lambda papers:{p['id']:{'id':p['id'],'relevance':'extension','high_related':False,'reason':'fixture','research_lines':['test']} for p in papers}
+        model.card.return_value={'main_results':['fixture result']}
+        source={'text':'fixture','references_text':'[1] fixture','pages_total':1,'pages_read':[1],'full_text':True}
+        config={'research_lines':['test'],'categories':['math.QA'],'batch_size':12}
+        with tempfile.TemporaryDirectory() as directory, patch('digest.pipeline.ROOT',Path(directory)), patch('digest.pipeline.Store',return_value=store), patch('digest.pipeline.Client'), patch('digest.pipeline.collect',side_effect=lambda *a:([dict(paper)],[],[])), patch('digest.pipeline.Codex',return_value=model), patch('digest.pipeline.extract_fulltext',return_value=source) as extract:
+            prepare(config,[date(2026,10,7)])
+            model.screen.reset_mock();model.card.reset_mock();extract.reset_mock()
+            result,_=prepare({**config,'batch_size':1},[date(2026,10,6),date(2026,10,7)])
+            model.screen.assert_not_called();model.card.assert_not_called();extract.assert_not_called()
+            self.assertEqual(result[1]['papers'][0]['analysis_status'],'complete')
+            prepare({**config,'research_lines':['new direction']},[date(2026,10,7)])
+            model.screen.assert_called_once();model.card.assert_called_once()
+
+    def test_incomplete_card_retries_without_screening_abstract_again(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import date
+        from unittest.mock import Mock
+        from digest.pipeline import prepare
+        store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
+        paper={'id':'2610.00001','version_id':'2610.00001v1','announcement_date':'2026-10-07','event':'new'}
+        model=Mock();model.calls=[]
+        model.screen.return_value={paper['id']:{'id':paper['id'],'relevance':'extension','high_related':False,'reason':'fixture','research_lines':[]}}
+        model.card.side_effect=[RuntimeError('temporary failure'),{'main_results':['fixture result']}]
+        source={'text':'fixture','references_text':'','pages_total':1,'pages_read':[1],'full_text':True}
+        with tempfile.TemporaryDirectory() as directory, patch('digest.pipeline.ROOT',Path(directory)), patch('digest.pipeline.Store',return_value=store), patch('digest.pipeline.Client'), patch('digest.pipeline.collect',side_effect=lambda *a:([dict(paper)],[],[])), patch('digest.pipeline.Codex',return_value=model), patch('digest.pipeline.extract_fulltext',return_value=source):
+            config={'research_lines':['test'],'categories':['math.QA']}
+            first,_=prepare(config,[date(2026,10,7)])
+            self.assertEqual(first[0]['papers'][0]['analysis_status'],'needs_retry')
+            second,_=prepare(config,[date(2026,10,7)])
+            self.assertEqual(second[0]['papers'][0]['analysis_status'],'complete')
+            model.screen.assert_called_once();self.assertEqual(model.card.call_count,2)
+
 if __name__=='__main__':unittest.main()
