@@ -84,6 +84,25 @@ class NotificationTests(unittest.TestCase):
         self.assertNotIn('<script>',result[2]);self.assertIn('&lt;script&gt;',result[2])
 
 class RevisionDiscoveryTests(unittest.TestCase):
+    def test_paused_backfill_default_only_prepares_yesterday(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import date
+        from unittest.mock import Mock
+        from digest.pipeline import prepare
+        from digest.common import write_json
+        store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
+        model=Mock();model.calls=[]
+        day=date(2026,10,8)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            write_json(root/'runtime'/'initial-plan.json',{'backfill_paused':True})
+            with patch('digest.pipeline.ROOT',root),patch('digest.pipeline.Store',return_value=store),patch('digest.pipeline.Client'),patch('digest.pipeline.collect',return_value=([],[],[])) as collect,patch('digest.pipeline.Codex',return_value=model),patch('digest.pipeline.yesterday',return_value=day):
+                digests,_=prepare({'research_lines':['test'],'categories':['math.QA']})
+            self.assertEqual(collect.call_args.args[2],[day])
+            self.assertEqual([d['day'] for d in digests],['2026-10-08'])
+            self.assertFalse(store.data.get('bootstrap_complete',False))
+
     def test_unseen_high_relevance_revision_is_read_and_low_relevance_is_excluded(self):
         import tempfile
         from pathlib import Path
@@ -93,16 +112,43 @@ class RevisionDiscoveryTests(unittest.TestCase):
         store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
         events=[{'id':aid,'version_id':aid+'v2','day':'2026-10-07'} for aid in ['2609.00001','2609.00002']]
         model=Mock();model.calls=[]
-        model.screen.return_value={e['id']:{'id':e['id'],'relevance':'extension','high_related':i==0,'reason':'test','research_lines':[]} for i,e in enumerate(events)}
+        model.screen.return_value={e['id']:{'id':e['id'],'relevance':'extension','high_related':i==0,'reason':'test','research_lines':[],'abstract_short':'这是摘要简述。'} for i,e in enumerate(events)}
         model.card.return_value={'main_results':['source-grounded fixture']}
         source={'text':'fixture','references_text':'[1] fixture','pages_total':1,'pages_read':[1],'full_text':True}
         with tempfile.TemporaryDirectory() as directory, patch('digest.pipeline.ROOT',Path(directory)), patch('digest.pipeline.Store',return_value=store), patch('digest.pipeline.Client'), patch('digest.pipeline.collect',return_value=([],events,[])), patch('digest.pipeline.metadata',return_value=[dict(e) for e in events]), patch('digest.pipeline.Codex',return_value=model), patch('digest.pipeline.extract_fulltext',return_value=source) as extract:
             digests,_=prepare({'research_lines':['test'],'categories':['math.QA'],'batch_size':12},[date(2026,10,7)])
             self.assertEqual([p['id'] for p in digests[0]['papers']],['2609.00001'])
-            self.assertEqual(extract.call_count,1)
+            extract.assert_not_called();model.card.assert_not_called()
+            self.assertEqual(digests[0]['papers'][0]['analysis_status'],'summary_only')
             self.assertEqual(len(model.screen.call_args.args[0]),2)
 
 class DigestReuseTests(unittest.TestCase):
+    def test_old_extensions_rescreened_with_no_fulltext_and_light_results_reused(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import date
+        from unittest.mock import Mock
+        from digest.pipeline import prepare
+        from digest.common import fingerprint,write_json
+        store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
+        config={'research_lines':['test'],'categories':['math.QA']}
+        papers=[{'id':f'2610.0000{i}','version_id':f'2610.0000{i}v1','announcement_date':'2026-10-07','event':'new','title':'Fixture','abstract':'abstract','authors':['A']} for i in range(2)]
+        old=[{**p,'relevance':'extension','reason':'vague','high_related':False,'research_lines':['test'],'analysis_status':'complete','card':{'proof_methods':['old deep read']},'references_text':'old references'} for p in papers]
+        model=Mock();model.calls=[]
+        model.screen.return_value={p['id']:{'id':p['id'],'relevance':'extension' if i==0 else 'unrelated','reason':'specific method' if i==0 else 'too broad','high_related':False,'research_lines':['test'],'abstract_short':'中文简述' if i==0 else ''} for i,p in enumerate(papers)}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            write_json(root/'runtime/digests/old.json',{'research_profile_hash':fingerprint(config['research_lines']),'papers':old})
+            with patch('digest.pipeline.ROOT',root),patch('digest.pipeline.Store',return_value=store),patch('digest.pipeline.Client'),patch('digest.pipeline.collect',side_effect=lambda *a:([dict(p) for p in papers],[],[])),patch('digest.pipeline.Codex',return_value=model),patch('digest.pipeline.extract_fulltext') as extract:
+                result,_=prepare(config,[date(2026,10,7)])
+                self.assertEqual([p['relevance'] for p in result[0]['papers']],['extension','unrelated'])
+                light=result[0]['papers'][0]
+                self.assertEqual(light['analysis_status'],'summary_only')
+                self.assertEqual(light['abstract_short'],'中文简述')
+                self.assertNotIn('proof_methods',light['card']);self.assertNotIn('references_text',light)
+                prepare(config,[date(2026,10,7)])
+                model.screen.assert_called_once();model.card.assert_not_called();extract.assert_not_called()
+
     def test_backfill_reuses_completed_version_but_profile_change_invalidates(self):
         import tempfile
         from pathlib import Path
@@ -112,7 +158,7 @@ class DigestReuseTests(unittest.TestCase):
         store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
         paper={'id':'2610.00001','version_id':'2610.00001v1','announcement_date':'2026-10-07','event':'new','title':'Fixture','abstract':'Fixture abstract','authors':['Author'],'categories':['math.QA'],'primary_category':'math.QA'}
         model=Mock();model.calls=[]
-        model.screen.side_effect=lambda papers:{p['id']:{'id':p['id'],'relevance':'extension','high_related':False,'reason':'fixture','research_lines':['test']} for p in papers}
+        model.screen.side_effect=lambda papers:{p['id']:{'id':p['id'],'relevance':'direct','high_related':False,'reason':'fixture','research_lines':['test']} for p in papers}
         model.card.return_value={'main_results':['fixture result']}
         source={'text':'fixture','references_text':'[1] fixture','pages_total':1,'pages_read':[1],'full_text':True}
         config={'research_lines':['test'],'categories':['math.QA'],'batch_size':12}
@@ -134,7 +180,7 @@ class DigestReuseTests(unittest.TestCase):
         store=Mock();store.data={'papers':{},'states':{},'digests':{},'profile':None}
         paper={'id':'2610.00001','version_id':'2610.00001v1','announcement_date':'2026-10-07','event':'new'}
         model=Mock();model.calls=[]
-        model.screen.return_value={paper['id']:{'id':paper['id'],'relevance':'extension','high_related':False,'reason':'fixture','research_lines':[]}}
+        model.screen.return_value={paper['id']:{'id':paper['id'],'relevance':'direct','high_related':False,'reason':'fixture','research_lines':[]}}
         model.card.side_effect=[RuntimeError('temporary failure'),{'main_results':['fixture result']}]
         source={'text':'fixture','references_text':'','pages_total':1,'pages_read':[1],'full_text':True}
         with tempfile.TemporaryDirectory() as directory, patch('digest.pipeline.ROOT',Path(directory)), patch('digest.pipeline.Store',return_value=store), patch('digest.pipeline.Client'), patch('digest.pipeline.collect',side_effect=lambda *a:([dict(paper)],[],[])), patch('digest.pipeline.Codex',return_value=model), patch('digest.pipeline.extract_fulltext',return_value=source):

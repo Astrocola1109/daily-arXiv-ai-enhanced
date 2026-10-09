@@ -1,6 +1,17 @@
 import json, os, urllib.request, urllib.parse
 from .common import ROOT, read_json, write_json
 
+def database_text(value):
+    """Postgres jsonb rejects NUL; preserve its position as a replacement glyph.
+
+    PDF extraction can produce NUL characters. Keep local source caches intact
+    and normalize only the outgoing database representation.
+    """
+    if isinstance(value,str):return value.replace('\x00','\ufffd')
+    if isinstance(value,list):return [database_text(item) for item in value]
+    if isinstance(value,dict):return {database_text(k):database_text(v) for k,v in value.items()}
+    return value
+
 class Store:
     def __init__(self):
         self.path=ROOT/'runtime'/'library.json'
@@ -20,7 +31,7 @@ class Store:
         headers={'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json',
                  'Prefer':'resolution=merge-duplicates,return=representation'}
         req=urllib.request.Request(base+'/rest/v1/'+table+query,
-                                   data=None if body is None else json.dumps(body,ensure_ascii=False).encode(),
+                                   data=None if body is None else json.dumps(database_text(body),ensure_ascii=False).encode(),
                                    headers=headers,method=method)
         with urllib.request.urlopen(req,timeout=45) as r:
             raw=r.read()

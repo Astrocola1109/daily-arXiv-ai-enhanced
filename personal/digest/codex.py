@@ -7,9 +7,10 @@ def obj(properties):
 
 STR = {'type': 'string'}
 STRINGS = {'type': 'array', 'items': STR}
+SCREENING_POLICY = 'specific-methods-light-extensions-v2'
 SCREEN_SCHEMA = obj({'papers': {'type': 'array', 'items': obj({
     'id': STR, 'relevance': {'type':'string','enum':['direct','extension','unrelated']},
-    'reason': STR, 'research_lines': STRINGS, 'high_related': {'type':'boolean'}
+    'reason': STR, 'research_lines': STRINGS, 'high_related': {'type':'boolean'}, 'abstract_short': STR
 })}})
 CARD_SCHEMA = obj({'abstract_zh': STR, 'main_results': STRINGS, 'key_conditions': STRINGS,
     'proof_methods': STRINGS, 'connection': STR, 'evidence': STRINGS,
@@ -69,8 +70,11 @@ class Codex:
         return result
 
     def screen(self, papers):
-        result=self.run('所有当前研究主线同等重要。优先召回，边界不确定时归入extension，并说明不确定。'
-                        'direct表示直接研究对象相关；extension表示方法或邻近工具相关；unrelated表示目前无明确联系。'
+        result=self.run('所有当前研究主线同等重要。direct表示直接研究对象或问题相关，继续尽量少漏直接相关论文。'
+                        '用户要求减少拓展论文：extension必须在摘要中出现具体的可迁移方法、定理或构造，并能明确对应一条现有研究主线及具体用途。'
+                        '只因共享代数、几何、量子、范畴等宽泛词语、仅属邻近学科，或只能说可能有用，不足以收录extension；这些归入unrelated。'
+                        '不确定的间接联系归入unrelated，不用宽泛联想凑数，不设置固定数量。reason用中文1至2句说明具体联系及适用性尚未验证的边界。'
+                        'extension的abstract_short只依据原摘要，用中文2至3句简述研究问题和结果，约80至150字；不得补造证明或定理条件。其他类别abstract_short可为空。'
                         '每个输入id必须恰好返回一次；不要固定推荐篇数。high_related仅表示与现有课题有很强联系。',
                         {'research_lines':self.config['research_lines'],'papers':papers},SCREEN_SCHEMA)['papers']
         if len(result)!=len(papers) or {p['id'] for p in result}!={p['id'] for p in papers}:

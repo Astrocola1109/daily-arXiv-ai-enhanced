@@ -1,7 +1,7 @@
 from datetime import timedelta
 from .common import ROOT, yesterday, today, write_json, read_json, fingerprint
 from .arxiv import Client, collect, metadata, extract_fulltext
-from .codex import Codex
+from .codex import Codex, SCREENING_POLICY
 from .store import Store
 
 SCREEN_FIELDS=('relevance','reason','research_lines','high_related')
@@ -9,19 +9,21 @@ SOURCE_FIELDS=('title','abstract','authors','primary_category','categories')
 
 def cached_papers(profile_hash):
     result={}
-    for path in sorted((ROOT/'runtime'/'digests').glob('*.json')):
+    paths=list((ROOT/'runtime'/'digests').glob('*.json'))+list((ROOT/'runtime'/'checkpoints').glob('*.json'))
+    for path in sorted(paths,key=lambda p:p.stat().st_mtime):
         digest=read_json(path,{})
         if digest.get('research_profile_hash')!=profile_hash:continue
         for paper in digest.get('papers',[]):
             if all(key in paper for key in SCREEN_FIELDS):
                 prior=result.get(paper['version_id'])
-                if prior is None or paper.get('analysis_status')=='complete':
+                if prior is None or paper.get('screening_policy')==SCREENING_POLICY or paper.get('analysis_status')=='complete':
                     result[paper['version_id']]=paper
     return result
 
 def prepare(config, days=None):
     store=Store();store.pull()
-    bootstrap=days is None and not store.data.get('bootstrap_complete',False)
+    plan=read_json(ROOT/'runtime'/'initial-plan.json',{})
+    bootstrap=days is None and not store.data.get('bootstrap_complete',False) and not plan.get('backfill_paused',False)
     if store.data.get('profile'):config={**config,'research_lines':store.data['profile']['research_lines']}
     profile_hash=fingerprint(config['research_lines'])
     cached=cached_papers(profile_hash)
@@ -46,8 +48,10 @@ def prepare(config, days=None):
         batch=papers[start:start+size]
         reusable={p['version_id']:cached[p['version_id']] for p in batch
                   if p['version_id'] in cached and all(p.get(k)==cached[p['version_id']].get(k) for k in SOURCE_FIELDS)}
-        results={v:{k:old[k] for k in SCREEN_FIELDS} for v,old in reusable.items()}
-        pending=[p for p in batch if p['version_id'] not in reusable]
+        results={v:{**{k:old[k] for k in SCREEN_FIELDS},'abstract_short':old.get('abstract_short','')}
+                 for v,old in reusable.items() if old['relevance']!='extension' or
+                 (old.get('screening_policy')==SCREENING_POLICY and old.get('abstract_short'))}
+        pending=[p for p in batch if p['version_id'] not in results]
         if len({p['id'] for p in pending})!=len(pending):
             for p in pending:results[p['version_id']]=model.screen([p])[p['id']]
         elif pending:
@@ -55,6 +59,7 @@ def prepare(config, days=None):
             results.update({p['version_id']:screened[p['id']] for p in pending})
         for p in batch:
             p.update(results[p['version_id']])
+            p['screening_policy']=SCREENING_POLICY
             if p['event']=='revision':
                 prior=store.data['papers'].get(p['id'],{})
                 p['high_related']=bool(prior.get('high_related') or p['high_related'])
@@ -62,7 +67,14 @@ def prepare(config, days=None):
                     p['exclude_from_digest']=True
                     continue
                 if p['relevance']=='unrelated':p['relevance']='extension'
-            if p['relevance']!='unrelated' and not store.data['states'].get(p['id'],{}).get('disliked'):
+            if p['relevance']=='extension':
+                # Extension recommendations use only the abstract, never a PDF/model card call.
+                p['analysis_status']='summary_only'
+                p['card']={'abstract_zh':p.get('abstract_short') or p['abstract'], 'connection':p['reason'],
+                           'limitations':['仅依据原摘要生成简述，未据此核验正文。']}
+                p['source_coverage']={'abstract_only':True}
+                p.pop('references_text',None);p.pop('analysis_error',None)
+            elif p['relevance']=='direct' and not store.data['states'].get(p['id'],{}).get('disliked'):
                 try:
                     old=reusable.get(p['version_id'],{})
                     if old.get('analysis_status')=='complete' and old.get('card') and old.get('source_coverage'):
@@ -81,6 +93,8 @@ def prepare(config, days=None):
             if prior is None or int(p['version_id'].rsplit('v',1)[-1])>=int(prior['version_id'].rsplit('v',1)[-1]):
                 store.data['papers'][p['id']]=p
             store.save()
+        write_json(ROOT/'runtime'/'checkpoints'/('processing-'+profile_hash+'.json'),
+                   {'research_profile_hash':profile_hash,'papers':papers[:start+size]})
         print(f'摘要筛选进度 {min(start+size,len(papers))}/{len(papers)}',flush=True)
     digests=[]
     for day in days:
@@ -88,7 +102,7 @@ def prepare(config, days=None):
         digest={'day':ds,'papers':[p for p in papers if p['announcement_date']==ds and not p.get('exclude_from_digest')],
                 'warnings':[w for w in warnings if ds in w],
                 'model':config.get('model'),'reasoning_effort':config.get('reasoning_effort'),
-                'research_profile_hash':profile_hash}
+                'research_profile_hash':profile_hash,'screening_policy':SCREENING_POLICY}
         write_json(ROOT/'runtime'/'digests'/(ds+'.json'),digest)
         store.data['digests'][ds]={'prepared':True,'published':False}
         store.save();digests.append(digest)

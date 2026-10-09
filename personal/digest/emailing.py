@@ -23,7 +23,7 @@ def render(digest, site_url, states):
         for p in group:
             url=site_url+'#paper='+p['version_id']
             body.append('<p><strong>'+html.escape(p['title'])+'</strong><br>'+html.escape(', '.join(p['authors']))+
-                        '<br>'+html.escape(p.get('reason',''))+'<br><a href="'+html.escape(url,quote=True)+'">登录阅读详细卡片</a></p>')
+                        '<br>'+html.escape(p.get('reason',''))+'<br><a href="'+html.escape(url,quote=True)+'">'+('登录查看简要介绍' if p['relevance']=='extension' else '登录阅读详细卡片')+'</a></p>')
             lines.append(p['title']+'\n'+p.get('reason','')+'\n'+url)
     body.append('<p>详细卡片与个人阅读状态需要登录查看。</p>')
     return subject,'\n\n'.join(lines),'\n'.join(body)

@@ -10,6 +10,7 @@ STATUS=ROOT/'runtime'/'initial-status.json'
 
 def status(stage, **fields):
     value=read_json(STATUS,{})
+    if stage!='failed':value.pop('error',None)
     value.update(stage=stage,updated_at=datetime.now(BJ).isoformat(),**fields)
     write_json(STATUS,value)
     print('Initial setup:',stage,flush=True)
@@ -58,6 +59,34 @@ def test_report(value, observed_timeouts):
     write_json(ROOT/'runtime'/'full-day-test-report.json',report)
     write_json(ROOT.parents[1]/'arxiv-full-day-test.json',report)
 
+def finish_priority_days(days):
+    """Complete only the explicitly requested days; leave older backfill paused."""
+    pending={};published=[];delivered=[]
+    for day in days:
+        prior=digest(day)
+        library=read_json(ROOT/'runtime'/'library.json',{})
+        timeouts=[p['version_id'] for p in library.get('papers',{}).values() if p.get('analysis_status')=='needs_retry']
+        from .codex import SCREENING_POLICY
+        if prior is None or prior.get('screening_policy')!=SCREENING_POLICY:
+            status('preparing_priority_day',day=day,backfill_paused=True)
+            run('prepare','--date',day)
+        if incomplete(digest(day)):
+            status('retrying_priority_cards',day=day,backfill_paused=True)
+            run('prepare','--date',day)
+        value=digest(day)
+        status('publishing_priority_day',day=day,backfill_paused=True)
+        run('publish','--date',day);published.append(day)
+        if day==TEST_DAY and not (ROOT/'runtime'/'full-day-test-report.json').exists():
+            test_report(value,timeouts)
+        if incomplete(value):
+            pending[day]=incomplete(value)
+        elif read_json(ROOT/'runtime'/'smtp-integration-test.json',{}).get('recipient_confirmed_received') and datetime.now(BJ).hour>=9:
+            status('sending_priority_day',day=day,backfill_paused=True)
+            run('send','--date',day);delivered.append(day)
+    stage='needs_attention' if pending else ('complete' if len(delivered)==len(days) else 'awaiting_delivery')
+    status(stage,published_days=published,pending_fulltext=pending,backfill_paused=True,
+           requested_days=days,delivery_checked_days=delivered)
+
 def main():
     runtime=ROOT/'runtime';runtime.mkdir(exist_ok=True)
     with (runtime/'bootstrap.lock').open('a+') as coordinator:
@@ -72,6 +101,13 @@ def main():
             with (runtime/'pipeline.lock').open('a+') as pipeline:
                 fcntl.flock(pipeline,fcntl.LOCK_EX)
                 fcntl.flock(pipeline,fcntl.LOCK_UN)
+            plan=read_json(runtime/'initial-plan.json',{})
+            if plan.get('backfill_paused'):
+                from datetime import date
+                days=sorted({date.fromisoformat(day).isoformat() for day in plan['priority_days']})
+                if not days:raise RuntimeError('No priority days configured while backfill is paused')
+                finish_priority_days(days)
+                return
             prior=digest(TEST_DAY)
             library=read_json(runtime/'library.json',{})
             timeouts=[p['version_id'] for p in library.get('papers',{}).values() if p.get('analysis_status')=='needs_retry']
