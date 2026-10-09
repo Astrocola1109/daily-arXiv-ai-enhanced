@@ -52,7 +52,11 @@ async function loadDay(){
   if(crossDay){
     for(let i=0;i<ids.length;i+=80)rows.push(...await fetchAll('papers',q=>q.in('paper_id',ids.slice(i,i+80)).order('announcement_date',{ascending:false})));
     const newest=new Map();for(const r of rows){const old=newest.get(r.paper_id);if(!old || Number(r.version_id.split('v').pop())>Number(old.version_id.split('v').pop()))newest.set(r.paper_id,r);}rows=[...newest.values()];
-  }else if(selectedDay){rows=await fetchAll('papers',q=>q.eq('announcement_date',selectedDay).order('version_id'));}
+  }else if(selectedDay){
+    rows=await fetchAll('papers',q=>q.eq('announcement_date',selectedDay).order('version_id'));
+    const versions=digests.find(d=>d.day===selectedDay)?.payload?.version_ids;
+    if(Array.isArray(versions)){const included=new Set(versions);rows=rows.filter(r=>included.has(r.version_id));}
+  }
   papers=rows.map(r=>r.payload);shell();
   const id=new URLSearchParams(location.hash.slice(1)).get('paper');
   if(id){let p=papers.find(p=>p.version_id===id);if(!p){const {data}=await client.from('papers').select('payload').eq('version_id',id).maybeSingle();p=data?.payload;}if(p)details(p);}
