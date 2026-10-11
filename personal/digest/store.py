@@ -1,4 +1,4 @@
-import json, os, urllib.request, urllib.parse
+import json, os, ssl, time, urllib.request, urllib.parse, urllib.error
 from .common import ROOT, read_json, write_json
 
 def database_text(value):
@@ -33,8 +33,23 @@ class Store:
         req=urllib.request.Request(base+'/rest/v1/'+table+query,
                                    data=None if body is None else json.dumps(database_text(body),ensure_ascii=False).encode(),
                                    headers=headers,method=method)
-        with urllib.request.urlopen(req,timeout=45) as r:
-            raw=r.read()
+        # Only reads and explicit upserts are safe to retry after an unknown
+        # transport outcome. Mail transmission uses a separate, non-retried path.
+        retryable=method=='GET' or (method=='POST' and 'on_conflict=' in query)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req,timeout=45) as r:
+                    raw=r.read()
+                break
+            except (urllib.error.URLError, OSError) as exc:
+                reason=exc.reason if isinstance(exc,urllib.error.URLError) else exc
+                if isinstance(exc,urllib.error.HTTPError):
+                    transient=exc.code in {408,429,500,502,503,504}
+                    exc.close()
+                else:
+                    transient=isinstance(reason,OSError) and not isinstance(reason,ssl.SSLCertVerificationError)
+                if not retryable or not transient or attempt==2:raise
+                time.sleep(2**(attempt+1))
         return json.loads(raw) if raw else None
 
     def pull(self):
