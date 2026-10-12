@@ -28,6 +28,21 @@ class AnnouncementTests(unittest.TestCase):
         raw='''<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>oai:arXiv.org:2609.00001v2</id><published>2026-10-07T00:00:00-04:00</published><arxiv:announce_type>replace</arxiv:announce_type></entry></feed>'''
         row=parse_feed(raw)[0]
         self.assertEqual(row['day'],'2026-10-07');self.assertEqual(row['kind'],'replace');self.assertEqual(row['version_id'],'2609.00001v2')
+    def test_official_nested_headings_keep_each_days_papers(self):
+        raw='''<dl id="articles"><h3>Mon, 12 Oct 2026 (showing 1 of 1 entries)</h3>
+        <dt><a href="/abs/2610.13933">paper</a></dt></dl>
+        <dl id="articles"><h3>Fri, 9 Oct 2026 (showing 2 of 2 entries)</h3>
+        <dt><a href="/abs/2610.11785">paper</a></dt>
+        <dt><a href="/abs/2610.11600">paper</a> (cross-list from math.RT)</dt></dl>'''
+        rows=parse_recent(raw,'math.QA')
+        self.assertEqual([(r['id'],r['day']) for r in rows],[
+            ('2610.13933','2026-10-12'),('2610.11785','2026-10-09'),('2610.11600','2026-10-09')])
+        self.assertTrue(rows[-1]['cross'])
+    def test_listing_count_mismatch_or_missing_list_fails(self):
+        for raw in [
+            '<dl><h3>Mon, 12 Oct 2026 (showing 2 of 2 entries)</h3><dt><a href="/abs/2610.13933">paper</a></dt></dl>',
+            '<h3>Mon, 12 Oct 2026 (showing 1 of 1 entries)</h3>']:
+            with self.assertRaises(RuntimeError):parse_recent(raw,'math.QA')
     def test_bad_id_is_rejected(self):
         for aid in ['../secret','2610.12345;curl x','https://evil.test']:
             with self.assertRaises(ValueError):valid_id(aid)

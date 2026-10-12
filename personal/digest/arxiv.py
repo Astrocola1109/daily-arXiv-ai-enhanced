@@ -58,13 +58,22 @@ def parse_recent(raw, category):
         if counts and int(counts[1]) < int(counts[2]):
             raise RuntimeError(f'{category}: announcement listing is truncated; pagination required')
         day = datetime.strptime(match[1], '%a, %d %b %Y').date().isoformat()
-        listing = heading.find_next('dl')
-        if listing is None: continue
+        # Official recent pages put the heading INSIDE its day's <dl>.
+        # Looking for the next <dl> in that layout silently selects the next day.
+        listing = heading.find_parent('dl')
+        if listing is None:
+            listing = heading.find_next('dl')
+        if listing is None:
+            raise RuntimeError(f'{category}: dated announcement heading has no listing')
+        day_rows = []
         for dt in listing.find_all('dt'):
             link = dt.find('a', href=re.compile(r'^/abs/'))
             if not link: continue
             aid = base_id(link['href'].removeprefix('/abs/'))
-            result.append({'id': aid, 'day': day, 'category': category, 'cross': 'cross-list' in dt.get_text()})
+            day_rows.append({'id': aid, 'day': day, 'category': category, 'cross': 'cross-list' in dt.get_text()})
+        if counts and len(day_rows) != int(counts[1]):
+            raise RuntimeError(f'{category}: parsed announcement count differs from dated heading')
+        result.extend(day_rows)
     if not dated_headings and not re.search(r'no (?:new )?(?:articles|entries|updates|submissions)', soup.get_text(), re.I):
         raise RuntimeError(f'{category}: announcement page was not recognized; refusing to treat it as an empty day')
     return result
