@@ -48,6 +48,27 @@ class SupervisorTests(unittest.TestCase):
    s.alert('2026-10-15',record,{'email_to':'b@example.com'})
    smtp.assert_called_once()
   self.assertIn('alert_attempted',read_json(self.root/'runtime/supervisor-records.json')['2026-10-15'])
+ def test_bounded_recovery_waits_in_process_until_due(self):
+  clock=[self.clock]
+  s.save_record('2026-10-15',{'attempts':2,'phase':'retry_wait','next_attempt_at':self.clock.timestamp()+60})
+  def sleep(seconds):
+   from datetime import timedelta
+   clock[0]+=timedelta(seconds=seconds)
+  def complete(day,record):
+   self.assertGreaterEqual(clock[0].timestamp(),self.clock.timestamp()+60)
+   write_json(s.state_path(day),{'stage':'complete','mail':'sent'})
+   record={**record,'phase':'complete','attempts':3};s.save_record(day,record);return record
+  with patch.object(s,'now',side_effect=lambda:clock[0]),patch.object(s.time,'sleep',side_effect=sleep) as wait,patch.object(s,'run_day',side_effect=complete) as run,patch.object(s,'locked',return_value=False):
+   s.supervise({})
+  self.assertEqual(wait.call_count,2);run.assert_called_once()
+  self.assertEqual(read_json(self.root/'runtime/supervisor-status.json')['stage'],'idle')
+ def test_recovery_wait_does_not_extend_exhausted_budget(self):
+  self.assertIsNone(s.retry_due({'2026-10-15':{'attempts':3,'phase':'retry_wait','next_attempt_at':0}}))
+ def test_supervisor_releases_awake_assertion_on_failure(self):
+  awake=Mock()
+  with patch.object(s,'locked',return_value=False),patch.object(s,'load_config',return_value={}),patch.object(s.subprocess,'Popen',return_value=awake),patch.object(s,'supervise',side_effect=RuntimeError('fixture')):
+   with self.assertRaisesRegex(RuntimeError,'fixture'):s.main()
+  awake.terminate.assert_called_once();awake.wait.assert_called_once()
 
 class TimeoutEvidenceTests(unittest.TestCase):
  def test_timeout_retains_partial_diagnostics_without_fake_usage(self):
