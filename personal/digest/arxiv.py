@@ -1,6 +1,8 @@
 """Use dated announcements, never API submission timestamps, for calendar selection."""
 import re, time, json, urllib.request, urllib.parse, xml.etree.ElementTree as ET
-from datetime import datetime, date
+from urllib.error import HTTPError
+from email.utils import parsedate_to_datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
@@ -29,6 +31,17 @@ class Client:
         key = fingerprint([url, 'immutable' if permanent else today().isoformat()])
         path = self.cache / key
         if path.exists(): return path.read_bytes()
+        # Explicit-version metadata is immutable too. Adopt matching legacy
+        # daily cache entries without downloading the same versions again.
+        if permanent and parsed.path == '/api/query':
+            for offset in range(8):
+                old = self.cache / fingerprint([url, str(today()-timedelta(days=offset))])
+                if old.exists():
+                    data = old.read_bytes(); path.write_bytes(data); return data
+        cooldown_path = self.cache / 'rate-limits.json'
+        limits = read_json(cooldown_path, {})
+        if limits.get(parsed.hostname, 0) > time.time():
+            raise RuntimeError('arXiv HTTP 429 cooldown active for '+parsed.hostname)
         for attempt in range(3):
             time.sleep(max(0, 3.1 - (time.monotonic() - self.last)))
             try:
@@ -40,6 +53,18 @@ class Client:
                         raise RuntimeError('Unexpected redirect')
                 path.write_bytes(data)
                 return data
+            except HTTPError as exc:
+                if exc.code == 429:
+                    retry = exc.headers.get('Retry-After', '') if exc.headers else ''
+                    try: delay = float(retry)
+                    except ValueError:
+                        try: delay = parsedate_to_datetime(retry).timestamp()-time.time()
+                        except (ValueError, TypeError, OverflowError): delay = 600
+                    limits[parsed.hostname] = time.time()+max(600, delay)
+                    write_json(cooldown_path, limits); exc.close()
+                    raise RuntimeError('arXiv HTTP 429 for '+parsed.hostname+parsed.path+'; cached data retained, requests cooled down') from exc
+                if attempt == 2: raise
+                time.sleep(2 ** attempt * 3)
             except Exception:
                 if attempt == 2: raise
                 time.sleep(2 ** attempt * 3)
@@ -115,7 +140,7 @@ def metadata(client, ids):
     for start in range(0, len(ids), 75):
         batch = ids[start:start+75]
         url = 'https://export.arxiv.org/api/query?' + urllib.parse.urlencode({'id_list': ','.join(batch), 'max_results': len(batch)})
-        output += parse_metadata(client.get(url))
+        output += parse_metadata(client.get(url, permanent=all(re.search(r'v\d+$', aid) for aid in batch)))
     if len(output)!=len(ids) or {p['id'] for p in output} != {base_id(x) for x in ids}:
         raise RuntimeError('arXiv metadata response is incomplete; retry required')
     expected={x for x in ids if re.search(r'v\d+$',x)}
@@ -124,12 +149,32 @@ def metadata(client, ids):
         raise RuntimeError('arXiv returned a different version than requested')
     return output
 
+def dated_listing(client, category, days):
+    """Reuse a validated archived listing only when it covers every requested day.
+
+    Do not label an old snapshot as today's HTTP cache: that could hide new papers.
+    """
+    url = 'https://arxiv.org/list/' + category + '/recent?show=2000'
+    wanted = {str(day) for day in days}
+    cache = getattr(client, 'cache', None)
+    if isinstance(cache, Path) and wanted and max(wanted) < str(today()):
+        for offset in range(1, 8):
+            snapshot = today() - timedelta(days=offset)
+            if str(snapshot) < max(wanted): break
+            path = cache / fingerprint([url, str(snapshot)])
+            if not path.exists(): continue
+            try: rows = parse_recent(path.read_bytes(), category)
+            except (ValueError, RuntimeError): continue
+            if wanted.issubset({row['day'] for row in rows}):
+                return rows
+    return parse_recent(client.get(url), category)
+
 def collect(client, categories, days):
     wanted = {str(d) for d in days}
     listings = {}; candidates = {}; feed_events = {}; warnings = []
     for cat in categories:
         if not CATEGORY.fullmatch(cat): raise ValueError('Invalid category')
-        listing = parse_recent(client.get('https://arxiv.org/list/' + cat + '/recent?show=2000'), cat)
+        listing = dated_listing(client, cat, days)
         listings[cat] = listing
         for p in listing:
             if p['day'] in wanted: candidates.setdefault(p['id'], set()).add(p['day'])
@@ -149,7 +194,7 @@ def collect(client, categories, days):
     papers = metadata(client, [aid + 'v1' for aid in sorted(candidates)]) if candidates else []
     for cat in sorted({p['primary_category'] for p in papers} - set(listings)):
         if not CATEGORY.fullmatch(cat): raise RuntimeError('Unknown primary category: ' + repr(cat))
-        listings[cat] = parse_recent(client.get('https://arxiv.org/list/' + cat + '/recent?show=2000'), cat)
+        listings[cat] = dated_listing(client, cat, days)
     first_dates = {p['id']: p['day'] for entries in listings.values() for p in entries if not p['cross']}
     output = []
     for p in papers:
