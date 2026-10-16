@@ -183,6 +183,8 @@ class DigestReuseTests(unittest.TestCase):
             result,_=prepare({**config,'batch_size':1},[date(2026,10,6),date(2026,10,7)])
             model.screen.assert_not_called();model.card.assert_not_called();extract.assert_not_called()
             self.assertEqual(result[1]['papers'][0]['analysis_status'],'complete')
+            self.assertEqual(len(list((Path(directory)/'runtime/checkpoints').glob('processing-*-2026-10-07.json'))),1)
+            self.assertEqual(len(list((Path(directory)/'runtime/checkpoints').glob('processing-*-2026-10-06.json'))),1)
             prepare({**config,'research_lines':['new direction']},[date(2026,10,7)])
             model.screen.assert_called_once();model.card.assert_called_once()
 

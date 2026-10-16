@@ -14,7 +14,7 @@ def now():
 
 
 def status(day, stage, **fields):
-    value={'day':day,'stage':stage,'updated_at':now().isoformat(),**fields}
+    value={'day':day,'stage':stage,'updated_at':now().isoformat(),'pid':os.getpid(),**fields}
     write_json(ROOT/'runtime'/'daily-status.json',value)
     write_json(ROOT/'runtime'/'daily-runs'/(day+'.json'),value)
     print('Daily digest:',day,stage,flush=True)

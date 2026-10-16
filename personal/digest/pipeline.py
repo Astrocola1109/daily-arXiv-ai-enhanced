@@ -1,5 +1,5 @@
-from datetime import timedelta
-from .common import ROOT, yesterday, today, write_json, read_json, fingerprint
+from datetime import datetime, timedelta
+from .common import ROOT, BJ, yesterday, today, write_json, read_json, fingerprint
 from .arxiv import Client, collect, metadata, extract_fulltext
 from .codex import Codex, SCREENING_POLICY
 from .store import Store
@@ -93,8 +93,14 @@ def prepare(config, days=None):
             if prior is None or int(p['version_id'].rsplit('v',1)[-1])>=int(prior['version_id'].rsplit('v',1)[-1]):
                 store.data['papers'][p['id']]=p
             store.save()
-        write_json(ROOT/'runtime'/'checkpoints'/('processing-'+profile_hash+'.json'),
-                   {'research_profile_hash':profile_hash,'papers':papers[:start+size]})
+        completed=papers[:start+size]
+        for selected_day in days:
+            ds=str(selected_day)
+            write_json(ROOT/'runtime'/'checkpoints'/('processing-'+profile_hash+'-'+ds+'.json'),
+                       {'research_profile_hash':profile_hash,'papers':[p for p in completed if p['announcement_date']==ds]})
+        write_json(ROOT/'runtime'/'pipeline-progress.json',
+                   {'days':[str(d) for d in days],'processed':min(start+size,len(papers)),
+                    'total':len(papers),'updated_at':datetime.now(BJ).isoformat()})
         print(f'摘要筛选进度 {min(start+size,len(papers))}/{len(papers)}',flush=True)
     digests=[]
     for day in days:

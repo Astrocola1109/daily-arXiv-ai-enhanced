@@ -51,6 +51,12 @@ class Codex:
             proc = subprocess.run(cmd,input=prompt,text=True,capture_output=True,cwd=self.root,env=env,
                                   timeout=self.config.get('codex_timeout_seconds',1800))
         except subprocess.TimeoutExpired as exc:
+            def decoded(value):
+                return value.decode('utf-8',errors='replace') if isinstance(value,bytes) else (value or '')
+            (self.root/(key+'.error.log')).write_text(decoded(exc.stderr)+'\n'+decoded(exc.stdout))
+            write_json(self.root/(key+'.failure.json'),
+                       {'kind':'timeout','elapsed_seconds':round(time.monotonic()-started,2),
+                        'model':model,'effort':effort})
             raise RuntimeError('Model step timed out; rerun resumes completed cached steps') from exc
         usage = []
         for line in proc.stdout.splitlines():
